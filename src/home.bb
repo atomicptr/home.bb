@@ -150,29 +150,53 @@
     install-method))
 
 (defn find-leaf-files [path]
-  (->> (fs/glob path "**/*" {:hidden true})
-       (concat (fs/glob path "*" {:hidden true}))
+  (->> (fs/glob path "**" {:hidden true})
        (filter #(not (fs/directory? %)))
        (map str)
        (distinct)))
 
-(defmethod install-config :link/files [_ opts]
-  (let [config-dir (:config-dir opts)
-        files      (find-leaf-files config-dir)]
+(defn run-for-file [fun opts]
+  (let [files (find-leaf-files (:config-dir opts))]
     (doseq [file files]
       (let [source-file-rel (str (fs/relativize (:config-dir opts) file))
             target-file     (str (fs/path (:target-dir opts) source-file-rel))]
-        (when (:verbose? opts)
-          (println "Linking:" file "->" target-file))
-        (when-not (:dry-run? opts)
-          (fs/delete-if-exists target-file)
-          (fs/create-sym-link target-file file))))))
+        (fun file target-file)))))
+
+(defmethod install-config :link/files [_ opts]
+  (run-for-file
+   (fn [file target-file]
+     (when (:verbose? opts)
+       (println "Linking File:" file "->" target-file))
+     (when-not (:dry-run? opts)
+       (fs/delete-if-exists target-file)
+       (fs/create-sym-link target-file file)))
+   opts))
 
 (defmethod install-config :link/dirs [_ opts]
-  (println "dirs" opts))
+  (let [dirs (->> (fs/glob (:config-dir opts) "**" {:hidden true})
+                  (filter fs/directory?)
+                  (filter #(empty? (filter fs/directory? (fs/glob % "**" {:hidden true}))))
+                  (map str))]
+    (doseq [dir dirs]
+      (assert (fs/directory? dir))
+      (let [source-dir-rel (str (fs/relativize (:config-dir opts) dir))
+            target-dir     (str (fs/path (:target-dir opts) source-dir-rel))]
+        (when (:verbose? opts)
+          (println "Linking Dir:" dir "->" target-dir))
+        (when-not (:dry-run? opts)
+          (when (fs/directory? target-dir)
+            (fs/delete-tree target-dir))
+          (fs/create-sym-link target-dir dir))))))
 
 (defmethod install-config :copy [_ opts]
-  (println "copy" opts))
+  (run-for-file
+   (fn [file target-file]
+     (when (:verbose? opts)
+       (println "Copying:" file "->" target-file))
+     (when-not (:dry-run? opts)
+       (fs/delete-if-exists target-file)
+       (fs/copy file target-file)))
+   opts))
 
 (defn install [m]
   (let [config-file (or (get m :config-file)
