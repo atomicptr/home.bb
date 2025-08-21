@@ -154,17 +154,20 @@
                                  (apply-module-paths fs/file-name host-specific)
                                  (into {} (map (fn [[k v]] [k (merge module-config-template v (get-in config [:overwrites k]))]))))]
       (when verbose?
-        (println (format "Found %s configurations..." (count modules))))
-      (pp/pprint modules))
+        (println (format "Found configurations for %s modules..." (count modules)))
 
-    (println root-dir config))
+        (doseq [[k module-config] modules]
+          (let [install-method (or (:install-method module-config)
+                                   (:install-method config))]
+            (pp/pprint [k module-config install-method])))))))
 
-  ; TODO: do the deed (dry run vs actual) pre-install-hook -> install -> post-install-hook
-  ;   :copy       -> delete if exists (exact leaf files) -> copy
-  ;   :link/files -> link the leaf files
-  ;   :link/dir   -> link the leaf dirs
-  ; TODO: handle .gpg files
-  (println "RUN" (find-config-file (fs/cwd))))
+      ; TODO: execute pre install hooks
+      ; TODO: do the deed (dry run vs actual) pre-install-hook -> install -> post-install-hook
+      ;   :copy       -> delete if exists (exact leaf files) -> copy
+      ;   :link/files -> link the leaf files
+      ;   :link/dir   -> link the leaf dirs
+      ; TODO: handle .gpg files
+      ; TODO: execute post install hooks
 
 (def cli-spec
   {:spec
