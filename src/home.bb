@@ -20,18 +20,17 @@
 (require '[babashka.cli :as cli]
          '[babashka.fs :as fs]
          '[clojure.string :as string]
-         '[clojure.edn :as edn]
-         '[clojure.pprint :as pp]
-         '[clojure.java.io :as io])
+         '[clojure.edn :as edn])
 
-(def default-config-name "homebb.edn")
-
-(def default-install-method :link/files)
+(def version "0.1.0-dev")
+(def repository "https://github.com/atomicptr/home.bb")
+(def config-file-name "homebb.edn")
 
 (def default-config
-  {:config-dir "configs"
-   :target-dir :env/HOME
-   :modules    {}})
+  {:config-dir     "configs"
+   :target-dir     :env/HOME
+   :install-method :link/files
+   :overwrites     {}})
 
 (defn determine-os []
   (let [os-name (string/lower-case (System/getProperty "os.name"))]
@@ -48,72 +47,66 @@
   (apply error args)
   (System/exit 1))
 
-(defn help-cmd [cmd arg-spec]
-  (println)
-  (println (format "home.bb %s [OPTION]\n" cmd))
-  (println "Options:")
-  (println (cli/format-opts {:spec arg-spec})))
+(defn find-config-file [from-dir]
+  (loop [curr from-dir]
+    (let [target-file (fs/path curr config-file-name)]
+      (cond
+        (fs/exists? target-file)
+        (str target-file)
 
-(def cli-spec-new
-  {:from-dir {:desc "Try to infer configuration from a directory in the form of {from-dir}/config-for-app-dir"}
-   :dry-run {:desc "Dry run, don't actually modify anything"
-             :coerce :bool}})
+        (nil? (fs/parent curr))
+        nil
 
-(defn find-config-dirs-in-path [path]
-  (->> (fs/list-dir path)
-       (filter fs/directory?)
-       (filter #(seq (fs/list-dir %)))
-       (map fs/file-name)
-       (filter #(not (string/starts-with? (str %) "+")))
-       (sort)))
+        :else
+        (recur (fs/parent curr))))))
 
-(defn new [m]
-  (when (get-in m [:opts :help])
-    (help-cmd "new" cli-spec-new)
-    (System/exit 0))
-  (let [target-file (str (fs/path (fs/cwd) default-config-name))
-        from-dir    (get-in m [:opts :from-dir])]
-    (when (and from-dir
-               (or
-                (not  (fs/exists? from-dir))
-                (not  (fs/directory? from-dir))))
-      (fatal "Directory supplied to --from-dir does not exist or isn't valid"))
+(defn install [m]
+  (let [config-file (or (get m :config-file)
+                        (find-config-file (fs/cwd)))
+        _           (assert (or config-file
+                                (fs/exists? config-file)))
+        config-file (str (fs/canonicalize config-file))
+        root-dir    (str (fs/parent config-file))
+        config      (merge default-config
+                           (edn/read-string (slurp config-file)))
+        hostname    (or (System/getenv "HOSTNAME")
+                        (.. java.net.InetAddress getLocalHost getHostName))
+        dry-run?    (:dry-run m)
+        verbose?    (:verbose m)]
+    (when verbose?
+      (println)
+      (println "============ home.bb")
+      (println "    Version:" version)
+      (println "Config File:" config-file)
+      (println "   Root Dir:" root-dir)
+      (println "   Hostname:" hostname)
+      (println "   Dry Run?:" (some? dry-run?))
+      (println "  Arguments:" m)
+      (println))
 
-    (let [data
-          (-> default-config
-              (assoc :config-dir (fs/file-name target-file))
-              (assoc :modules    (if from-dir
-                                   (into {} (map #(vector (keyword %) {:type default-install-method}) (find-config-dirs-in-path from-dir)))
-                                   {})))]
-      (if (get-in m [:opts :dry-run])
-        (pp/pprint data)
-        (with-open [w (io/writer target-file)]
-          (pp/pprint
-           w))))))
+    (println root-dir config))
 
-(def cli-spec-run
-  {:dry-run {:desc "Dry run, don't actually modify anything"
-             :coerce :bool}})
-
-(defn run [m]
-  ; TODO: read config file
-  ; TODO: figure out environment
-  ; TODO: warn user about missing config entries (in dir vs. in config file)
   ; TODO: parse config data properly (env/HOME, etc)
   ; TODO: do the deed (dry run vs actual) pre-install-hook -> install -> post-install-hook
   ;   :copy       -> delete if exists (exact leaf files) -> copy
   ;   :link/files -> link the leaf files
   ;   :link/dir   -> link the leaf dirs
   ; TODO: handle .gpg files
-  (println "RUN" m))
+  (println "RUN" (find-config-file (fs/cwd))))
 
-(defn help [m]
-  (println "HELP" m))
-
-(def cli-table
-  [{:cmds ["new"] :fn new :spec cli-spec-new}
-   {:cmds ["run"] :fn run}
-   {:cmds []      :fn help}])
+(def cli-spec
+  {:spec
+   {:config-file {:desc     (format "Specify which `%s` to use" config-file-name)
+                  :alias    :C
+                  :validate fs/exists?}
+    :dry-run     {:desc   "Does not actually do anything except for printing what would be done"
+                  :coerce :bool}
+    :verbose     {:desc   "Show more information"
+                  :coerce :bool}
+    :version     {:desc   "Show home.bb version"
+                  :coerce :bool}
+    :help        {:desc   "Show help message"
+                  :coerce :bool}}})
 
 (defn -main [& args]
   (when (= :windows (determine-os))
@@ -121,7 +114,24 @@
   (when (= :unknown (determine-os))
     (fatal "Unknown operating system"))
 
-  (cli/dispatch cli-table args {}))
+  (try
+    (let [opts (cli/parse-opts args cli-spec)]
+      (when (:version opts)
+        (println version)
+        (System/exit 0))
+
+      (when (:help opts)
+        (println
+         (format "\nhome.bb - A simple configuration driven dotfiles manager made using Babashka\n\n  Repository:\t%s\n  Version:\t%s\n"
+                 repository
+                 version))
+        (println "Options:\n")
+        (println (cli/format-opts cli-spec))
+        (System/exit 0))
+
+      (install opts))
+    (catch Throwable t
+      (error (ex-message t)))))
 
 (when (= *file* (System/getProperty "babashka.file"))
   (apply -main *command-line-args*))
