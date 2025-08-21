@@ -20,7 +20,8 @@
 (require '[babashka.cli :as cli]
          '[babashka.fs :as fs]
          '[clojure.string :as string]
-         '[clojure.edn :as edn])
+         '[clojure.edn :as edn]
+         '[clojure.pprint :as pp])
 
 (def version "0.1.0-dev")
 (def repository "https://github.com/atomicptr/home.bb")
@@ -30,7 +31,14 @@
   {:config-dir     "configs"
    :target-dir     :env/HOME
    :install-method :link/files
+   :pre-install    []
+   :post-install   []
    :overwrites     {}})
+
+(def module-config-template
+  {:install-method nil
+   :pre-install    []
+   :post-install   []})
 
 (defn determine-os []
   (let [os-name (string/lower-case (System/getProperty "os.name"))]
@@ -60,6 +68,44 @@
         :else
         (recur (fs/parent curr))))))
 
+(defn expand-env-vars [m]
+  (cond
+    (map? m)
+    (into {} (map (fn [[k v]] [k (expand-env-vars v)]) m))
+
+    (vector? m)
+    (mapv expand-env-vars m)
+
+    (seq? m)
+    (map expand-env-vars m)
+
+    (and (keyword? m)
+         (= "env" (namespace m)))
+    (let [env (System/getenv (name m))]
+      (when-not env
+        (throw (ex-info (format "Configuration contains request for environment variable: '%s' which is unset" (name m)) {})))
+      env)
+
+    :else m))
+
+(defn expand-config [config]
+  (->> config
+       expand-env-vars))
+
+(defn apply-module-paths [fun paths m]
+  (reduce
+   (fn [acc path]
+     (let [key (keyword (fun path))]
+       (update
+        acc
+        key
+        (fn [existing]
+          (if existing
+            (update existing :config-dirs conj path)
+            {:config-dirs [path]})))))
+   m
+   paths))
+
 (defn install [m]
   (let [config-file (or (get m :config-file)
                         (find-config-file (fs/cwd)))
@@ -69,6 +115,12 @@
         root-dir    (str (fs/parent config-file))
         config      (merge default-config
                            (edn/read-string (slurp config-file)))
+        config      (expand-config config)
+        config-root (:config-dir config)
+        config-root (if (fs/absolute? config-root)
+                      config-root
+                      (str (fs/path root-dir config-root)))
+        _           (assert (fs/directory? config-root))
         hostname    (or (System/getenv "HOSTNAME")
                         (.. java.net.InetAddress getLocalHost getHostName))
         dry-run?    (:dry-run m)
@@ -79,14 +131,34 @@
       (println "    Version:" version)
       (println "Config File:" config-file)
       (println "   Root Dir:" root-dir)
+      (println "Config Root:" config-root)
       (println "   Hostname:" hostname)
       (println "   Dry Run?:" (some? dry-run?))
       (println "  Arguments:" m)
       (println))
 
+    (let [host-specific (let [host-dir (fs/path config-root (str "+" hostname))]
+                          (if (fs/directory? host-dir)
+                            (->> (fs/list-dir host-dir)
+                                 (filter fs/directory?)
+                                 (map str)
+                                 (sort))
+                            []))
+          config-dirs       (->> (fs/list-dir config-root)
+                                 (filter fs/directory?)
+                                 (filter #(not (string/starts-with? (fs/file-name %) "+")))
+                                 (map str)
+                                 (sort))
+          modules           (->> {}
+                                 (apply-module-paths fs/file-name config-dirs)
+                                 (apply-module-paths fs/file-name host-specific)
+                                 (into {} (map (fn [[k v]] [k (merge module-config-template v (get-in config [:overwrites k]))]))))]
+      (when verbose?
+        (println (format "Found %s configurations..." (count modules))))
+      (pp/pprint modules))
+
     (println root-dir config))
 
-  ; TODO: parse config data properly (env/HOME, etc)
   ; TODO: do the deed (dry run vs actual) pre-install-hook -> install -> post-install-hook
   ;   :copy       -> delete if exists (exact leaf files) -> copy
   ;   :link/files -> link the leaf files
