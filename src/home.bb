@@ -1,6 +1,6 @@
 #!/usr/bin/env bb
 
-;; home.bb - A simple configuration driven dotfiles manager made using Babashka
+;; home.bb - Simple, one file, zero dependency dotfiles manager powered by https://babashka.org/
 ;;
 ;; Repository: https://github.com/atomicptr/home.bb
 ;;
