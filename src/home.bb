@@ -162,14 +162,22 @@
             target-file     (str (fs/path (:target-dir opts) source-file-rel))]
         (fun file target-file)))))
 
+(defn is-symlink-pointing-to? [symlink file]
+  (and (fs/exists? symlink)
+       (fs/sym-link? symlink)
+       (= file (str (fs/read-link symlink)))))
+
 (defmethod install-config :link/files [_ opts]
   (run-for-file
    (fn [file target-file]
-     (when (:verbose? opts)
-       (println "Linking File:" file "->" target-file))
-     (when-not (:dry-run? opts)
-       (fs/delete-if-exists target-file)
-       (fs/create-sym-link target-file file)))
+     (if (is-symlink-pointing-to? target-file file)
+       (when (:verbose? opts)
+         (println "Target File:" target-file "is already correctly setup"))
+       (do (when (:verbose? opts)
+             (println "Linking File:" file "->" target-file))
+           (when-not (:dry-run? opts)
+             (fs/delete-if-exists target-file)
+             (fs/create-sym-link target-file file)))))
    opts))
 
 (defmethod install-config :link/dirs [_ opts]
@@ -181,12 +189,15 @@
       (assert (fs/directory? dir))
       (let [source-dir-rel (str (fs/relativize (:config-dir opts) dir))
             target-dir     (str (fs/path (:target-dir opts) source-dir-rel))]
-        (when (:verbose? opts)
-          (println "Linking Dir:" dir "->" target-dir))
-        (when-not (:dry-run? opts)
-          (when (fs/directory? target-dir)
-            (fs/delete-tree target-dir))
-          (fs/create-sym-link target-dir dir))))))
+        (if (is-symlink-pointing-to? target-dir dir)
+          (when (:verbose? opts)
+            (println "Target Dir:" target-dir "is already correctly setup"))
+          (do (when (:verbose? opts)
+                (println "Linking Dir:" dir "->" target-dir))
+              (when-not (:dry-run? opts)
+                (when (fs/directory? target-dir)
+                  (fs/delete-tree target-dir))
+                (fs/create-sym-link target-dir dir))))))))
 
 (defmethod install-config :copy [_ opts]
   (run-for-file
