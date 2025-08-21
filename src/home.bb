@@ -19,6 +19,7 @@
 
 (require '[babashka.cli :as cli]
          '[babashka.fs :as fs]
+         '[babashka.process :refer [shell]]
          '[clojure.string :as string]
          '[clojure.edn :as edn]
          '[clojure.pprint :as pp])
@@ -106,6 +107,71 @@
    m
    paths))
 
+(defn replace-vars [vars s]
+  (reduce (fn [s [k v]] (string/replace s (re-pattern (str k)) v)) s vars))
+
+(defn run-hook [hook vars verbose? dry-run?]
+  (case (first hook)
+    :shell
+    (let [cmd (:cmd (second hook))
+          args (:args (map (partial replace-vars vars) (or (second hook) [])))]
+      (when verbose?
+        (println (format "run-hook: :shell %s %s" cmd args)))
+      (assert (and cmd (fs/which cmd)))
+
+      (when-not dry-run?
+        (apply shell cmd args)))
+
+    :delete
+    (let [path (second hook)
+          _    (assert path)
+          path (replace-vars vars path)]
+      (when verbose?
+        (println (format "run-hook: :delete %s" path)))
+
+      (when-not dry-run?
+        (fs/delete-if-exists path)))
+
+    :touch
+    (let [path (second hook)
+          _    (assert path)
+          path (replace-vars vars path)]
+      (when verbose?
+        (println (format "run-hook: :touch %s" path)))
+
+      (when-not dry-run?
+        (when-not (fs/exists? (second hook))
+          (fs/create-file vars))))))
+
+(defmulti install-config
+  (fn [install-method opts]
+    (when (:verbose? opts)
+      (println (format "installing %s from '%s' to '%s'..." (:name opts) (:config-dir opts) (:target-dir opts))))
+    install-method))
+
+(defn find-leaf-files [path]
+  (->> (fs/glob path "**/*" {:hidden true})
+       (filter #(not (fs/directory? %)))
+       (map str)))
+
+(defmethod install-config :link/files [_ opts]
+  (let [config-dir (:config-dir opts)
+        files      (find-leaf-files config-dir)]
+    (doseq [file files]
+      (let [source-file-rel (str (fs/relativize (:config-dir opts) file))
+            target-file     (str (fs/path (:target-dir opts) source-file-rel))]
+        (when (:verbose? opts)
+          (println "Linking:" file "->" target-file))
+        (when-not (:dry-run? opts)
+          (fs/delete-if-exists target-file)
+          (fs/create-sym-link target-file file))))))
+
+(defmethod install-config :link/dirs [_ opts]
+  (println "dirs" opts))
+
+(defmethod install-config :copy [_ opts]
+  (println "copy" opts))
+
 (defn install [m]
   (let [config-file (or (get m :config-file)
                         (find-config-file (fs/cwd)))
@@ -117,12 +183,16 @@
                            (edn/read-string (slurp config-file)))
         config      (expand-config config)
         config-root (:config-dir config)
+        target-dir  (:target-dir config)
         config-root (if (fs/absolute? config-root)
                       config-root
                       (str (fs/path root-dir config-root)))
         _           (assert (fs/directory? config-root))
         hostname    (or (System/getenv "HOSTNAME")
                         (.. java.net.InetAddress getLocalHost getHostName))
+        vars        {:hostname    hostname
+                     :config-root config-root
+                     :target-dir  target-dir}
         dry-run?    (:dry-run m)
         verbose?    (:verbose m)]
     (when verbose?
@@ -137,6 +207,12 @@
       (println "  Arguments:" m)
       (println))
 
+    ; run pre install hooks
+    (when verbose?
+      (println "Running pre install hooks..."))
+    (doseq [hook (:pre-install config)]
+      (run-hook hook vars verbose? dry-run?))
+
     (let [host-specific (let [host-dir (fs/path config-root (str "+" hostname))]
                           (if (fs/directory? host-dir)
                             (->> (fs/list-dir host-dir)
@@ -144,30 +220,54 @@
                                  (map str)
                                  (sort))
                             []))
-          config-dirs       (->> (fs/list-dir config-root)
-                                 (filter fs/directory?)
-                                 (filter #(not (string/starts-with? (fs/file-name %) "+")))
-                                 (map str)
-                                 (sort))
-          modules           (->> {}
-                                 (apply-module-paths fs/file-name config-dirs)
-                                 (apply-module-paths fs/file-name host-specific)
-                                 (into {} (map (fn [[k v]] [k (merge module-config-template v (get-in config [:overwrites k]))]))))]
+          config-dirs   (->> (fs/list-dir config-root)
+                             (filter fs/directory?)
+                             (filter #(not (string/starts-with? (fs/file-name %) "+")))
+                             (map str)
+                             (sort))
+          modules       (->> {}
+                             (apply-module-paths fs/file-name config-dirs)
+                             (apply-module-paths fs/file-name host-specific)
+                             (into {} (map (fn [[k v]] [k (merge module-config-template v (get-in config [:overwrites k]))]))))]
       (when verbose?
-        (println (format "Found configurations for %s modules..." (count modules)))
+        (println (format "Found configurations for %s modules..." (count modules))))
 
-        (doseq [[k module-config] modules]
-          (let [install-method (or (:install-method module-config)
-                                   (:install-method config))]
-            (pp/pprint [k module-config install-method])))))))
+      (doseq [[k module-config] modules]
+        (let [install-method (or (:install-method module-config)
+                                 (:install-method config))]
+          (pp/pprint [k module-config install-method])
+          ; run config pre install hooks
+          (when (and verbose? (not-empty (:pre-install module-config)))
+            (println (format "Running %s pre install hooks..." k)))
 
-      ; TODO: execute pre install hooks
-      ; TODO: do the deed (dry run vs actual) pre-install-hook -> install -> post-install-hook
-      ;   :copy       -> delete if exists (exact leaf files) -> copy
-      ;   :link/files -> link the leaf files
-      ;   :link/dir   -> link the leaf dirs
-      ; TODO: handle .gpg files
-      ; TODO: execute post install hooks
+          (doseq [hook (:pre-install module-config)]
+            (run-hook hook vars verbose? dry-run?))
+
+          ; install config
+          (doseq [config-dir (:config-dirs module-config)]
+              ; TODO: handle .gpg files "file processors"
+            (install-config install-method
+                            {:name k
+                             :config-root config-root
+                             :config-dir config-dir
+                             :target-dir target-dir
+                             :module-config module-config
+                             :verbose? verbose?
+                             :dry-run? dry-run?}))
+
+          ; run config post install hooks
+          (when (and verbose? (not-empty (:post-install module-config)))
+            (println (format "Running %s post install hooks..." k)))
+
+          (doseq [hook (:post-install module-config)]
+            (run-hook hook vars verbose? dry-run?)))))
+
+    ; run post install hooks
+    (when verbose?
+      (println "Running post install hooks..."))
+
+    (doseq [hook (:post-install config)]
+      (run-hook hook vars verbose? dry-run?))))
 
 (def cli-spec
   {:spec
@@ -189,8 +289,8 @@
   (when (= :unknown (determine-os))
     (fatal "Unknown operating system"))
 
-  (try
-    (let [opts (cli/parse-opts args cli-spec)]
+  (let [opts (cli/parse-opts args cli-spec)]
+    (try
       (when (:version opts)
         (println version)
         (System/exit 0))
@@ -204,9 +304,11 @@
         (println (cli/format-opts cli-spec))
         (System/exit 0))
 
-      (install opts))
-    (catch Throwable t
-      (error (ex-message t)))))
+      (install opts)
+      (catch Throwable t
+        (error (ex-message t))
+        (when (:verbose opts)
+          (error t))))))
 
 (when (= *file* (System/getProperty "babashka.file"))
   (apply -main *command-line-args*))
