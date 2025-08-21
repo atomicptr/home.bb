@@ -140,8 +140,8 @@
         (println (format "run-hook: :touch %s" path)))
 
       (when-not dry-run?
-        (when-not (fs/exists? (second hook))
-          (fs/create-file vars))))))
+        (when-not (fs/exists? path)
+          (fs/create-file path))))))
 
 (defmulti install-config
   (fn [install-method opts]
@@ -151,8 +151,10 @@
 
 (defn find-leaf-files [path]
   (->> (fs/glob path "**/*" {:hidden true})
+       (concat (fs/glob path "*" {:hidden true}))
        (filter #(not (fs/directory? %)))
-       (map str)))
+       (map str)
+       (distinct)))
 
 (defmethod install-config :link/files [_ opts]
   (let [config-dir (:config-dir opts)
