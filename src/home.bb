@@ -17,16 +17,18 @@
 ;; You should have received a copy of the GNU General Public License
 ;; along with Project X. If not, see <https://www.gnu.org/licenses/>.
 
+;============ user config
+(def config-file-name "homebb.edn")
+
+;============ globals
+(def version "0.1.0-dev")
+(def repository "https://github.com/atomicptr/home.bb")
+
 (require '[babashka.cli :as cli]
          '[babashka.fs :as fs]
          '[babashka.process :refer [shell]]
          '[clojure.string :as string]
-         '[clojure.edn :as edn]
-         '[clojure.pprint :as pp])
-
-(def version "0.1.0-dev")
-(def repository "https://github.com/atomicptr/home.bb")
-(def config-file-name "homebb.edn")
+         '[clojure.edn :as edn])
 
 (def default-config
   {:config-dir     "configs"
@@ -209,6 +211,11 @@
        (fs/copy file target-file)))
    opts))
 
+(defn dead-symlink? [path]
+  (and (fs/exists? path)
+       (fs/sym-link? path)
+       (not (fs/exists? (fs/read-link path)))))
+
 (defn install [m]
   (let [config-file (or (get m :config-file)
                         (find-config-file (fs/cwd)))
@@ -272,7 +279,6 @@
       (doseq [[k module-config] modules]
         (let [install-method (or (:install-method module-config)
                                  (:install-method config))]
-          (pp/pprint [k module-config install-method])
           ; run config pre install hooks
           (when (and verbose? (not-empty (:pre-install module-config)))
             (println (format "Running %s pre install hooks..." k)))
@@ -282,6 +288,13 @@
 
           ; install config
           (doseq [config-dir (:config-dirs module-config)]
+            ; look for dead symlinks
+            (doseq [link (->> (fs/glob config-dir "**" {:hidden true})
+                              (filter dead-symlink?))]
+              (when verbose?
+                (println "Removing dead symlink" link))
+              (fs/delete-if-exists link))
+
               ; TODO: handle .gpg files "file processors"
             (install-config install-method
                             {:name k
@@ -304,7 +317,8 @@
       (println "Running post install hooks..."))
 
     (doseq [hook (:post-install config)]
-      (run-hook hook vars verbose? dry-run?))))
+      (run-hook hook vars verbose? dry-run?)))
+  (println "\n🚀 Dotfiles successfully installed!\n"))
 
 (def cli-spec
   {:spec
