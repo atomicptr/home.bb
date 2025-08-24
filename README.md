@@ -149,7 +149,7 @@ For example, you might have gpg encrypted files in your dotfiles and would like 
 
 ```clojure
 {:config-dir "configs"
-:target-dir  :env/HOME
+ :target-dir  :env/HOME
 
  :file-processors
  [{:extension "gpg"
@@ -161,6 +161,8 @@ which will then be executed with the vars `:target-file` and `:file` (in additio
 
 - `:file` is the file with the extension (e.g. `configs/api/my-secret-api-key.gpg`)
 - `:target-file` is the same file with the extension removed (e.g. `configs/api/my-secret-api-key`)
+
+**Note**: The processor will currently not be executed if the target file already exists.
 
 ## License
 
