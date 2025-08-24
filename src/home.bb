@@ -4,18 +4,18 @@
 ;;
 ;; Repository: https://github.com/atomicptr/home.bb
 ;;
-;; Project X is free software: you can redistribute it and/or modify
+;; home.bb is free software: you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
 ;; the Free Software Foundation, either version 3 of the License, or
 ;; (at your option) any later version.
 ;;
-;; Project X is distributed in the hope that it will be useful,
+;; home.bb is distributed in the hope that it will be useful,
 ;; but WITHOUT ANY WARRANTY; without even the implied warranty of
 ;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 ;; GNU General Public License for more details.
 ;;
 ;; You should have received a copy of the GNU General Public License
-;; along with Project X. If not, see <https://www.gnu.org/licenses/>.
+;; along with home.bb. If not, see <https://www.gnu.org/licenses/>.
 
 ;============ user config
 (def config-file-name "homebb.edn")
@@ -116,7 +116,7 @@
   (case (first hook)
     :shell
     (let [cmd (:cmd (second hook))
-          args (:args (map (partial replace-vars vars) (or (second hook) [])))]
+          args (vec (map (partial replace-vars vars) (or (:args (second hook)) [])))]
       (when verbose?
         (println (format "run-hook: :shell %s %s" cmd args)))
       (assert (and cmd (fs/which cmd)))
@@ -216,6 +216,24 @@
        (fs/sym-link? path)
        (not (fs/exists? (fs/read-link path)))))
 
+(defn execute-file-processor [processor opts vars]
+  (doseq [file (fs/glob (:config-dir opts) (str "**/*." (:extension processor)) {:hidden true})]
+    (let [file                  (str file)
+          source-file-rel       (str (fs/relativize (:config-dir opts) file))
+          target-processor-file (str (fs/path (:target-dir opts) source-file-rel))
+          _                     (assert (fs/exists? target-processor-file))
+          target-file           (fs/strip-ext target-processor-file (:extension processor))]
+      (if (fs/exists? target-file)
+        (when (:verbose? opts)
+          (println (format "File processor '%s': Target file '%s' already exists" (:extension processor) target-file)))
+        (do (when (:verbose? opts)
+              (println (format "Executing file processor '%s' on file '%s' -> '%s'" (:extension processor) target-processor-file target-file)))
+            (run-hook (:run processor)
+                      (merge vars {:file target-processor-file
+                                   :target-file target-file})
+                      (:verbose? opts)
+                      (:dry-run? opts)))))))
+
 (defn install [m]
   (let [config-file (or (get m :config-file)
                         (find-config-file (fs/cwd)))
@@ -295,7 +313,6 @@
                 (println "Removing dead symlink" link))
               (fs/delete-if-exists link))
 
-              ; TODO: handle .gpg files "file processors"
             (install-config install-method
                             {:name k
                              :config-root config-root
@@ -303,7 +320,16 @@
                              :target-dir target-dir
                              :module-config module-config
                              :verbose? verbose?
-                             :dry-run? dry-run?}))
+                             :dry-run? dry-run?})
+
+            (doseq [processor (concat (:file-processors config)
+                                      (:file-processors module-config))]
+              (execute-file-processor processor
+                                      {:config-dir config-dir
+                                       :target-dir target-dir
+                                       :verbose? verbose?
+                                       :dry-run? dry-run?}
+                                      vars)))
 
           ; run config post install hooks
           (when (and verbose? (not-empty (:post-install module-config)))

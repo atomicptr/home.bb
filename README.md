@@ -140,6 +140,28 @@ As you might've noticed we can use some variables here, here a simple list of wh
  :target-dir  "absolute path to the target dir (:env/HOME)"}
 ```
 
+### File processors
+
+In addition to pre/post install hooks you can also execute a command on files after they've been installed based on
+their filetype with the purpose of creating some sort of new file. These are called file processors.
+
+For example, you might have gpg encrypted files in your dotfiles and would like to decrypt them:
+
+```clojure
+{:config-dir "configs"
+:target-dir  :env/HOME
+
+ :file-processors
+ [{:extension "gpg"
+   :run [:shell {:cmd "gpg" :args ["--output" ":target-file" "-d" ":file"]}]}]}
+```
+
+First we define an extension on which the file processor is to be executed on, next a command (same syntax as for hooks)
+which will then be executed with the vars `:target-file` and `:file` (in addition to previously explained vars) available.
+
+- `:file` is the file with the extension (e.g. `configs/api/my-secret-api-key.gpg`)
+- `:target-file` is the same file with the extension removed (e.g. `configs/api/my-secret-api-key`)
+
 ## License
 
 GPLv3
