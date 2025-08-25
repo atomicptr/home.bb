@@ -21,7 +21,7 @@
 (def config-file-name "homebb.edn")
 
 ;============ globals
-(def version "0.1.0-dev")
+(def version "0.2.0")
 (def repository "https://github.com/atomicptr/home.bb")
 
 (require '[babashka.cli :as cli]
