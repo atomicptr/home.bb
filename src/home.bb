@@ -21,7 +21,7 @@
 (def config-file-name "homebb.edn")
 
 ;============ globals
-(def version "0.2.0")
+(def version "0.3.0")
 (def repository "https://github.com/atomicptr/home.bb")
 
 (require '[babashka.cli :as cli]
@@ -178,7 +178,10 @@
        (do (when (:verbose? opts)
              (println "Linking File:" file "->" target-file))
            (when-not (:dry-run? opts)
-             (fs/delete-if-exists target-file)
+             (when (fs/exists? target-file)
+               (if (:force? opts)
+                 (fs/delete target-file)
+                 (fatal (format "File '%s' already exists and would be overwritten, please back it up first or delete it." target-file))))
              (fs/create-sym-link target-file file)))))
    opts))
 
@@ -256,7 +259,8 @@
                      :config-root config-root
                      :target-dir  target-dir}
         dry-run?    (:dry-run m)
-        verbose?    (:verbose m)]
+        verbose?    (:verbose m)
+        force?      (:force m)]
     (when verbose?
       (println)
       (println "============ home.bb")
@@ -320,7 +324,8 @@
                              :target-dir target-dir
                              :module-config module-config
                              :verbose? verbose?
-                             :dry-run? dry-run?})
+                             :dry-run? dry-run?
+                             :force? force?})
 
             (doseq [processor (concat (:file-processors config)
                                       (:file-processors module-config))]
@@ -354,6 +359,9 @@
     :dry-run     {:desc   "Does not actually do anything except for printing what would be done"
                   :coerce :bool}
     :verbose     {:desc   "Show more information"
+                  :coerce :bool}
+    :force       {:desc   "Overwrites files that already exist when executing, only use this option if you know what you're doing"
+                  :alias  :f
                   :coerce :bool}
     :version     {:desc   "Show home.bb version"
                   :coerce :bool}
