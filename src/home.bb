@@ -157,36 +157,48 @@
        (map str)
        (distinct)))
 
-(defn run-for-file [fun opts]
-  (let [files (find-leaf-files (:config-dir opts))]
-    (doseq [file files]
-      (let [source-file-rel (str (fs/relativize (:config-dir opts) file))
-            target-file     (str (fs/path (:target-dir opts) source-file-rel))]
-        (fun file target-file)))))
+(defn run-for-file [fun opts files]
+  (doseq [file files]
+    (let [source-file-rel (str (fs/relativize (:config-dir opts) file))
+          target-file     (str (fs/path (:target-dir opts) source-file-rel))]
+      (fun file target-file))))
 
 (defn is-symlink-pointing-to? [symlink file]
   (and (fs/exists? symlink)
        (fs/sym-link? symlink)
        (= file (str (fs/read-link symlink)))))
 
+(defn link-file [file target-file opts]
+  (if (is-symlink-pointing-to? target-file file)
+    (when (:verbose? opts)
+      (println "Target File:" target-file "is already correctly setup"))
+    (do (when (:verbose? opts)
+          (println "Linking File:" file "->" target-file))
+        (when-not (:dry-run? opts)
+          (fs/create-dirs (fs/parent target-file))
+          (when (fs/exists? target-file)
+            (if (:force? opts)
+              (fs/delete target-file)
+              (fatal (format "File '%s' already exists and would be overwritten, please back it up first or delete it." target-file))))
+          (fs/create-sym-link target-file file)))))
+
 (defmethod install-config :link/files [_ opts]
   (run-for-file
    (fn [file target-file]
-     (if (is-symlink-pointing-to? target-file file)
-       (when (:verbose? opts)
-         (println "Target File:" target-file "is already correctly setup"))
-       (do (when (:verbose? opts)
-             (println "Linking File:" file "->" target-file))
-           (when-not (:dry-run? opts)
-             (fs/create-dirs (fs/parent target-file))
-             (when (fs/exists? target-file)
-               (if (:force? opts)
-                 (fs/delete target-file)
-                 (fatal (format "File '%s' already exists and would be overwritten, please back it up first or delete it." target-file))))
-             (fs/create-sym-link target-file file)))))
-   opts))
+     (link-file file target-file opts))
+   opts
+   (find-leaf-files (:config-dir opts))))
 
 (defmethod install-config :link/dirs [_ opts]
+  ; install files for root dir
+  (let [files (->> (fs/glob (:config-dir opts) "*" {:hidden true})
+                   (filter #(not (fs/directory? %)))
+                   (map str))]
+    (run-for-file
+     (fn [file target-file]
+       (link-file file target-file opts))
+     opts
+     files))
   (let [dirs (->> (fs/glob (:config-dir opts) "**" {:hidden true})
                   (filter fs/directory?)
                   (filter #(empty? (filter fs/directory? (fs/glob % "**" {:hidden true}))))
@@ -201,8 +213,10 @@
           (do (when (:verbose? opts)
                 (println "Linking Dir:" dir "->" target-dir))
               (when-not (:dry-run? opts)
+                (assert (not= (:target-dir opts) target-dir))
                 (when (fs/directory? target-dir)
                   (fs/delete-tree target-dir))
+                (fs/create-dirs (fs/parent target-dir))
                 (fs/create-sym-link target-dir dir))))))))
 
 (defmethod install-config :copy [_ opts]
@@ -212,8 +226,10 @@
        (println "Copying:" file "->" target-file))
      (when-not (:dry-run? opts)
        (fs/delete-if-exists target-file)
+       (fs/create-dirs (fs/parent target-file))
        (fs/copy file target-file)))
-   opts))
+   opts
+   (find-leaf-files (:config-dir opts))))
 
 (defn dead-symlink? [path]
   (and (fs/exists? path)

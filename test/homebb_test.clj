@@ -40,7 +40,7 @@
       (fs/create-dirs (fs/parent full-path))
       (spit (str full-path) content))))
 
-(deftest ^:integration test-simple-install
+(deftest ^:integration test-simple-install-link-files
   (testing "creating install with install method :link/files"
     (create-config {:config-dir     "configs"
                     :target-dir     (target-dir)
@@ -50,7 +50,8 @@
                               ".vim/colors/theme.vim" "colorscheme dark\n"})
     (create-test-files "git" {".gitconfig" "# Hello World!"})
 
-    (install {:config-file (str (fs/path @test-dir "homebb.edn"))})
+    (install {:config-file (str (fs/path @test-dir "homebb.edn"))
+              :verbose true})
 
     (is (fs/sym-link? (target-dir ".vimrc")))
     (is (fs/sym-link? (target-dir ".vim/colors/theme.vim")))
@@ -59,3 +60,44 @@
     (is (fs/sym-link? (target-dir ".gitconfig")))
     (is (= "# Hello World!" (slurp (target-dir ".gitconfig"))))))
 
+(deftest ^:integration test-simple-install-link-dirs
+  (testing "creating install with install method :link/dirs"
+    (create-config {:config-dir     "configs"
+                    :target-dir     (target-dir)
+                    :install-method :link/dirs})
+
+    (create-test-files "vim" {".vimrc" "set number\n"
+                              ".vim/colors/theme.vim" "colorscheme dark\n"})
+    (create-test-files "git" {".gitconfig" "# Hello World!"})
+
+    (install {:config-file (str (fs/path @test-dir "homebb.edn"))
+              :verbose true})
+
+    (is (fs/sym-link? (target-dir ".vimrc")))
+    (is (not (fs/sym-link? (target-dir ".vim/colors/theme.vim"))))
+    (is (fs/sym-link? (fs/parent (target-dir ".vim/colors/theme.vim"))))
+    (is (not (fs/sym-link? (fs/parent (fs/parent (target-dir ".vim/colors/theme.vim"))))))
+    (is (= "set number\n" (slurp (target-dir ".vimrc"))))
+    (is (= "colorscheme dark\n" (slurp (target-dir ".vim/colors/theme.vim"))))
+    (is (fs/sym-link? (target-dir ".gitconfig")))
+    (is (= "# Hello World!" (slurp (target-dir ".gitconfig"))))))
+
+(deftest ^:integration test-simple-install-copy
+  (testing "creating install with install method :link/files"
+    (create-config {:config-dir     "configs"
+                    :target-dir     (target-dir)
+                    :install-method :copy})
+
+    (create-test-files "vim" {".vimrc" "set number\n"
+                              ".vim/colors/theme.vim" "colorscheme dark\n"})
+    (create-test-files "git" {".gitconfig" "# Hello World!"})
+
+    (install {:config-file (str (fs/path @test-dir "homebb.edn"))
+              :verbose true})
+
+    (is (not (fs/sym-link? (target-dir ".vimrc"))))
+    (is (not (fs/sym-link? (target-dir ".vim/colors/theme.vim"))))
+    (is (= "set number\n" (slurp (target-dir ".vimrc"))))
+    (is (= "colorscheme dark\n" (slurp (target-dir ".vim/colors/theme.vim"))))
+    (is (not (fs/sym-link? (target-dir ".gitconfig"))))
+    (is (= "# Hello World!" (slurp (target-dir ".gitconfig"))))))
