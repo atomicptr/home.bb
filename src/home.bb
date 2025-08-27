@@ -178,6 +178,7 @@
        (do (when (:verbose? opts)
              (println "Linking File:" file "->" target-file))
            (when-not (:dry-run? opts)
+             (fs/create-dirs (fs/parent target-file))
              (when (fs/exists? target-file)
                (if (:force? opts)
                  (fs/delete target-file)
