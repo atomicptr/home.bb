@@ -21,7 +21,7 @@
 (def config-file-name "homebb.edn")
 
 ;============ globals
-(def version "0.3.2")
+(def version "0.4.0")
 (def repository "https://github.com/atomicptr/home.bb")
 
 (require '[babashka.cli :as cli]
@@ -43,6 +43,26 @@
    :pre-install    []
    :post-install   []})
 
+(def colors
+  {:red     "\033[31m"
+   :green   "\033[32m"
+   :yellow  "\033[33m"
+   :blue    "\033[34m"
+   :magenta "\033[35m"
+   :cyan    "\033[36m"
+   :white   "\033[37m"
+   :bold    "\033[1m"
+   :dim     "\033[2m"
+   :reset   "\033[0m"})
+
+(def symbols
+  {:check   "✓"
+   :cross   "✗"
+   :arrow   "→"})
+
+(defn colorize [color text]
+  (str (get colors color) text (:reset colors)))
+
 (defn determine-os []
   (let [os-name (string/lower-case (System/getProperty "os.name"))]
     (cond
@@ -51,8 +71,21 @@
       (string/includes? os-name "windows") :windows
       :else                                :unknown)))
 
+(defn log [prefix color & args]
+  (->> (map str args)
+       (string/join " ")
+       (str prefix " ")
+       (colorize color)
+       (println)))
+
+(defn verbose-log [& args]
+  (apply log (str "  " (:arrow symbols)) :dim args))
+
+(defn success [& args]
+  (apply log (:check symbols) :green args))
+
 (defn error [& args]
-  (apply println "ERR:" args))
+  (apply log (:cross symbols) :red args))
 
 (defn fatal [& args]
   (apply error args)
@@ -118,7 +151,7 @@
     (let [cmd (:cmd (second hook))
           args (vec (map (partial replace-vars vars) (or (:args (second hook)) [])))]
       (when verbose?
-        (println (format "run-hook: :shell %s %s" cmd args)))
+        (verbose-log (format "run-hook: :shell %s %s" cmd args)))
       (assert (and cmd (fs/which cmd)))
 
       (when-not dry-run?
@@ -129,7 +162,7 @@
           _    (assert path)
           path (replace-vars vars path)]
       (when verbose?
-        (println (format "run-hook: :delete %s" path)))
+        (verbose-log (format "run-hook: :delete %s" path)))
 
       (when-not dry-run?
         (fs/delete-if-exists path)))
@@ -139,7 +172,7 @@
           _    (assert path)
           path (replace-vars vars path)]
       (when verbose?
-        (println (format "run-hook: :touch %s" path)))
+        (verbose-log (format "run-hook: :touch %s" path)))
 
       (when-not dry-run?
         (when-not (fs/exists? path)
@@ -148,7 +181,7 @@
 (defmulti install-config
   (fn [install-method opts]
     (when (:verbose? opts)
-      (println (format "installing %s from '%s' to '%s'..." (:name opts) (:config-dir opts) (:target-dir opts))))
+      (verbose-log (format "installing %s from '%s' to '%s'..." (:name opts) (:config-dir opts) (:target-dir opts))))
     install-method))
 
 (defn find-leaf-files [path]
@@ -171,9 +204,9 @@
 (defn link-file [file target-file opts]
   (if (is-symlink-pointing-to? target-file file)
     (when (:verbose? opts)
-      (println "Target File:" target-file "is already correctly setup"))
+      (verbose-log "Target File:" target-file "is already correctly setup"))
     (do (when (:verbose? opts)
-          (println "Linking File:" file "->" target-file))
+          (verbose-log "Linking File:" file "->" target-file))
         (when-not (:dry-run? opts)
           (fs/create-dirs (fs/parent target-file))
           (when (fs/exists? target-file)
@@ -209,9 +242,9 @@
             target-dir     (str (fs/path (:target-dir opts) source-dir-rel))]
         (if (is-symlink-pointing-to? target-dir dir)
           (when (:verbose? opts)
-            (println "Target Dir:" target-dir "is already correctly setup"))
+            (verbose-log "Target Dir:" target-dir "is already correctly setup"))
           (do (when (:verbose? opts)
-                (println "Linking Dir:" dir "->" target-dir))
+                (verbose-log "Linking Dir:" dir "->" target-dir))
               (when-not (:dry-run? opts)
                 (assert (not= (:target-dir opts) target-dir))
                 (when (fs/directory? target-dir)
@@ -223,7 +256,7 @@
   (run-for-file
    (fn [file target-file]
      (when (:verbose? opts)
-       (println "Copying:" file "->" target-file))
+       (verbose-log "Copying:" file "->" target-file))
      (when-not (:dry-run? opts)
        (fs/delete-if-exists target-file)
        (fs/create-dirs (fs/parent target-file))
@@ -245,9 +278,9 @@
           target-file           (fs/strip-ext target-processor-file (:extension processor))]
       (if (fs/exists? target-file)
         (when (:verbose? opts)
-          (println (format "File processor '%s': Target file '%s' already exists" (:extension processor) target-file)))
+          (verbose-log (format "File processor '%s': Target file '%s' already exists" (:extension processor) target-file)))
         (do (when (:verbose? opts)
-              (println (format "Executing file processor '%s' on file '%s' -> '%s'" (:extension processor) target-processor-file target-file)))
+              (verbose-log (format "Executing file processor '%s' on file '%s' -> '%s'" (:extension processor) target-processor-file target-file)))
             (run-hook (:run processor)
                       (merge vars {:file target-processor-file
                                    :target-file target-file})
@@ -279,20 +312,19 @@
         verbose?    (:verbose m)
         force?      (:force m)]
     (when verbose?
-      (println)
-      (println "============ home.bb")
-      (println "    Version:" version)
-      (println "Config File:" config-file)
-      (println "   Root Dir:" root-dir)
-      (println "Config Root:" config-root)
-      (println "   Hostname:" hostname)
-      (println "   Dry Run?:" (some? dry-run?))
-      (println "  Arguments:" m)
-      (println))
+      (verbose-log "============ home.bb")
+      (verbose-log "    Version:" version)
+      (verbose-log "Config File:" config-file)
+      (verbose-log "   Root Dir:" root-dir)
+      (verbose-log "Config Root:" config-root)
+      (verbose-log "   Hostname:" hostname)
+      (verbose-log "   Dry Run?:" (some? dry-run?))
+      (verbose-log "  Arguments:" m)
+      (verbose-log "===================="))
 
     ; run pre install hooks
     (when verbose?
-      (println "Running pre install hooks..."))
+      (verbose-log "Running pre install hooks..."))
     (doseq [hook (:pre-install config)]
       (run-hook hook vars verbose? dry-run?))
 
@@ -313,14 +345,14 @@
                              (apply-module-paths fs/file-name host-specific)
                              (into {} (map (fn [[k v]] [k (merge module-config-template v (get-in config [:overwrites k]))]))))]
       (when verbose?
-        (println (format "Found configurations for %s modules..." (count modules))))
+        (verbose-log (format "Found configurations for %s modules..." (count modules))))
 
       (doseq [[k module-config] modules]
         (let [install-method (or (:install-method module-config)
                                  (:install-method config))]
           ; run config pre install hooks
           (when (and verbose? (not-empty (:pre-install module-config)))
-            (println (format "Running %s pre install hooks..." k)))
+            (verbose-log (format "Running %s pre install hooks..." k)))
 
           (doseq [hook (:pre-install module-config)]
             (run-hook hook vars verbose? dry-run?))
@@ -331,18 +363,24 @@
             (doseq [link (->> (fs/glob config-dir "**" {:hidden true})
                               (filter dead-symlink?))]
               (when verbose?
-                (println "Removing dead symlink" link))
+                (verbose-log "Removing dead symlink" link))
               (fs/delete-if-exists link))
 
-            (install-config install-method
-                            {:name k
-                             :config-root config-root
-                             :config-dir config-dir
-                             :target-dir target-dir
-                             :module-config module-config
-                             :verbose? verbose?
-                             :dry-run? dry-run?
-                             :force? force?})
+            (try
+              (install-config install-method
+                              {:name k
+                               :config-root config-root
+                               :config-dir config-dir
+                               :target-dir target-dir
+                               :module-config module-config
+                               :verbose? verbose?
+                               :dry-run? dry-run?
+                               :force? force?})
+              (catch Throwable t
+                (when verbose?
+                  (verbose-log "Error:" t))
+                (fatal "Could not install" k "because:" (ex-message t))))
+            (success "Installed" k)
 
             (doseq [processor (concat (:file-processors config)
                                       (:file-processors module-config))]
@@ -355,18 +393,19 @@
 
           ; run config post install hooks
           (when (and verbose? (not-empty (:post-install module-config)))
-            (println (format "Running %s post install hooks..." k)))
+            (verbose-log (format "Running %s post install hooks..." k)))
 
           (doseq [hook (:post-install module-config)]
             (run-hook hook vars verbose? dry-run?)))))
 
     ; run post install hooks
     (when verbose?
-      (println "Running post install hooks..."))
+      (verbose-log "Running post install hooks..."))
 
     (doseq [hook (:post-install config)]
       (run-hook hook vars verbose? dry-run?)))
-  (println "\n🚀 Dotfiles successfully installed!\n"))
+  (println)
+  (println "🚀 Dotfiles successfully installed!"))
 
 (def cli-spec
   {:spec
