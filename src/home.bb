@@ -21,7 +21,7 @@
 (def config-file-name "homebb.edn")
 
 ;============ globals
-(def version "0.4.0")
+(def version "0.4.1")
 (def repository "https://github.com/atomicptr/home.bb")
 
 (require '[babashka.cli :as cli]
@@ -350,13 +350,6 @@
       (doseq [[k module-config] modules]
         (let [install-method (or (:install-method module-config)
                                  (:install-method config))]
-          ; run config pre install hooks
-          (when (and verbose? (not-empty (:pre-install module-config)))
-            (verbose-log (format "Running %s pre install hooks..." k)))
-
-          (doseq [hook (:pre-install module-config)]
-            (run-hook hook vars verbose? dry-run?))
-
           ; install config
           (doseq [config-dir (:config-dirs module-config)]
             ; look for dead symlinks
@@ -365,6 +358,13 @@
               (when verbose?
                 (verbose-log "Removing dead symlink" link))
               (fs/delete-if-exists link))
+
+            ; run config pre install hooks
+            (when (and verbose? (not-empty (:pre-install module-config)))
+              (verbose-log (format "Running %s (%s) pre install hooks..." k config-dir)))
+
+            (doseq [hook (:pre-install module-config)]
+              (run-hook hook (merge vars {:config-dir config-dir}) verbose? dry-run?))
 
             (try
               (install-config install-method
@@ -389,14 +389,14 @@
                                        :target-dir target-dir
                                        :verbose? verbose?
                                        :dry-run? dry-run?}
-                                      vars)))
+                                      vars))
 
-          ; run config post install hooks
-          (when (and verbose? (not-empty (:post-install module-config)))
-            (verbose-log (format "Running %s post install hooks..." k)))
+            ; run config post install hooks
+            (when (and verbose? (not-empty (:post-install module-config)))
+              (verbose-log (format "Running %s (%s) post install hooks..." k config-dir)))
 
-          (doseq [hook (:post-install module-config)]
-            (run-hook hook vars verbose? dry-run?)))))
+            (doseq [hook (:post-install module-config)]
+              (run-hook hook (merge vars {:config-dir config-dir}) verbose? dry-run?))))))
 
     ; run post install hooks
     (when verbose?
