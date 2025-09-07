@@ -21,7 +21,9 @@
 (def config-file-name "homebb.edn")
 
 ;============ globals
-(def version "0.4.2")
+(def version "0.4.3")
+(def app-name "home.bb")
+(def app-description "Simple, one file, zero dependency dotfiles manager powered by Babashka")
 (def repository "https://github.com/atomicptr/home.bb")
 
 (require '[babashka.cli :as cli]
@@ -312,7 +314,7 @@
         verbose?    (:verbose m)
         force?      (:force m)]
     (when verbose?
-      (verbose-log "============ home.bb")
+      (verbose-log "============ " app-name)
       (verbose-log "    Version:" version)
       (verbose-log "Config File:" config-file)
       (verbose-log "   Root Dir:" root-dir)
@@ -419,7 +421,7 @@
     :force       {:desc   "Overwrites files that already exist when executing, only use this option if you know what you're doing"
                   :alias  :f
                   :coerce :bool}
-    :version     {:desc   "Show home.bb version"
+    :version     {:desc   (format "Show %s version" app-name)
                   :coerce :bool}
     :help        {:desc   "Show help message"
                   :coerce :bool}}})
@@ -438,7 +440,9 @@
 
       (when (:help opts)
         (println
-         (format "\nhome.bb - A simple configuration driven dotfiles manager made using Babashka\n\n  Repository:\t%s\n  Version:\t%s\n"
+         (format "\n%s - %s\n\n  Repository:\t%s\n  Version:\t%s\n"
+                 app-name
+                 app-description
                  repository
                  version))
         (println "Options:\n")
