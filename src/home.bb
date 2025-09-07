@@ -21,7 +21,7 @@
 (def config-file-name "homebb.edn")
 
 ;============ globals
-(def version "0.4.1")
+(def version "0.4.2")
 (def repository "https://github.com/atomicptr/home.bb")
 
 (require '[babashka.cli :as cli]
@@ -380,7 +380,7 @@
                 (when verbose?
                   (verbose-log "Error:" t))
                 (fatal "Could not install" k "because:" (ex-message t))))
-            (success "Installed" k)
+            (success "Installed" (colorize :bold (name k)))
 
             (doseq [processor (concat (:file-processors config)
                                       (:file-processors module-config))]
