@@ -1,11 +1,12 @@
 (ns homebb-test
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
-            [babashka.fs :as fs]
-            [clojure.edn :as edn]))
+            [babashka.fs :as fs]))
 
 (load-file "src/home.bb")
 
 (def test-dir (atom nil))
+
+(declare install dead-symlink?)
 
 (defn setup-temp-dir []
   (reset! test-dir (str (fs/create-temp-dir {:prefix "homebb-test"})))
@@ -16,6 +17,9 @@
 (defn target-dir
   ([] (str (fs/path @test-dir "home")))
   ([path] (str (fs/path @test-dir "home" path))))
+
+(defn test-file-path [config-name file]
+  (fs/path @test-dir "configs" config-name file))
 
 (defn cleanup-temp-dir []
   (when @test-dir
@@ -101,3 +105,29 @@
     (is (= "colorscheme dark\n" (slurp (target-dir ".vim/colors/theme.vim"))))
     (is (not (fs/sym-link? (target-dir ".gitconfig"))))
     (is (= "# Hello World!" (slurp (target-dir ".gitconfig"))))))
+
+(deftest ^:integration test-removing-dead-symlinks
+  (testing "remove dead symlinks"
+    (create-config {:config-dir     "configs"
+                    :target-dir     (target-dir)
+                    :install-method :link/files})
+
+    (create-test-files "vim" {".vimrc" "set number\n"
+                              ".vim/colors/theme.vim" "colorscheme dark\n"})
+    (create-test-files "git" {".gitconfig" "# Hello World!"})
+
+    (install {:config-file (str (fs/path @test-dir "homebb.edn"))
+              :verbose true})
+
+    (is (fs/exists? (test-file-path "vim" ".vim/colors/theme.vim")))
+    (is (fs/sym-link? (target-dir ".vim/colors/theme.vim")))
+
+    (fs/delete-if-exists (test-file-path "vim" ".vim/colors/theme.vim"))
+    (is (not (fs/exists? (test-file-path "vim" ".vim/colors/theme.vim"))))
+
+    (is (dead-symlink? (target-dir ".vim/colors/theme.vim")))
+
+    (install {:config-file (str (fs/path @test-dir "homebb.edn"))
+              :verbose true})
+
+    (is (not (fs/sym-link? (target-dir ".vim/colors/theme.vim"))))))

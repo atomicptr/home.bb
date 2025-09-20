@@ -21,7 +21,7 @@
 (def config-file-name "homebb.edn")
 
 ;============ globals
-(def version "0.4.3")
+(def version "0.4.4")
 (def app-name "home.bb")
 (def app-description "Simple, one file, zero dependency dotfiles manager powered by Babashka")
 (def repository "https://github.com/atomicptr/home.bb")
@@ -267,9 +267,28 @@
    (find-leaf-files (:config-dir opts))))
 
 (defn dead-symlink? [path]
-  (and (fs/exists? path)
-       (fs/sym-link? path)
+  (and (fs/sym-link? path)
        (not (fs/exists? (fs/read-link path)))))
+
+(defn glob-all [dir]
+  (cond
+    (fs/directory? dir)
+    (->> (fs/list-dir dir)
+         (mapv #(if (fs/directory? %) (concat [%] (glob-all %)) %))
+         (flatten)
+         (map str))
+
+    :else
+    [(str dir)]))
+
+(defn find-dead-symlinks-in-target-dir [target-dir config-dir]
+  (->> (fs/list-dir config-dir)
+       (mapv #(fs/relativize config-dir %))
+       (mapv #(fs/path target-dir %))
+       (mapv #(if (fs/directory? %) (concat [%] (glob-all %)) %))
+       (flatten)
+       (filterv dead-symlink?)
+       (mapv str)))
 
 (defn execute-file-processor [processor opts vars]
   (doseq [file (fs/glob (:config-dir opts) (str "**/*." (:extension processor)) {:hidden true})]
@@ -355,8 +374,7 @@
           ; install config
           (doseq [config-dir (:config-dirs module-config)]
             ; look for dead symlinks
-            (doseq [link (->> (fs/glob config-dir "**" {:hidden true})
-                              (filter dead-symlink?))]
+            (doseq [link (find-dead-symlinks-in-target-dir target-dir config-dir)]
               (when verbose?
                 (verbose-log "Removing dead symlink" link))
               (fs/delete-if-exists link))
