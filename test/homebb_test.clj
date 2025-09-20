@@ -113,8 +113,7 @@
                     :install-method :link/files})
 
     (create-test-files "vim"        {".vimrc" "set number\n"
-                                     ".vim/colors/theme.vim" "colorscheme dark\n"
-                                     ".vim/colors/bright.vim" "colorscheme bright\n"})
+                                     ".vim/colors/theme.vim" "colorscheme dark\n"})
     (create-test-files "git"        {".gitconfig" "# Hello World!"})
     (create-test-files "wallpapers" {".local/share/wallpapers/wallpaper" "This is an image"})
 

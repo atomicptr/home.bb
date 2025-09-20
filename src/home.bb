@@ -21,7 +21,7 @@
 (def config-file-name "homebb.edn")
 
 ;============ globals
-(def version "0.4.5")
+(def version "0.4.6")
 (def app-name "home.bb")
 (def app-description "Simple, one file, zero dependency dotfiles manager powered by Babashka")
 (def repository "https://github.com/atomicptr/home.bb")
@@ -279,12 +279,14 @@
        (not (fs/exists? (fs/read-link path)))))
 
 (defn find-dead-symlinks-in-target-dir [target-dir config-dir]
-  (->> (find-leaf-files config-dir)
-       (mapv #(reparent-path % config-dir target-dir))
-       (mapv fs/parent)
-       (distinct)
+  (->> (concat (->> (find-leaf-files config-dir)
+                    (mapv #(reparent-path % config-dir target-dir))
+                    (mapv fs/parent))
+               (->> (find-leaf-dirs config-dir)
+                    (mapv #(reparent-path % config-dir target-dir))))
        (mapv #(fs/glob % "*" {:hidden true}))
        (flatten)
+       (distinct)
        (filterv dead-symlink?)))
 
 (defn execute-file-processor [processor opts vars]
