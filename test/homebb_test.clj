@@ -112,9 +112,10 @@
                     :target-dir     (target-dir)
                     :install-method :link/files})
 
-    (create-test-files "vim" {".vimrc" "set number\n"
-                              ".vim/colors/theme.vim" "colorscheme dark\n"})
-    (create-test-files "git" {".gitconfig" "# Hello World!"})
+    (create-test-files "vim"        {".vimrc" "set number\n"
+                                     ".vim/colors/theme.vim" "colorscheme dark\n"})
+    (create-test-files "git"        {".gitconfig" "# Hello World!"})
+    (create-test-files "wallpapers" {".local/share/wallpapers/wallpaper" "This is an image"})
 
     (install {:config-file (str (fs/path @test-dir "homebb.edn"))
               :verbose true})

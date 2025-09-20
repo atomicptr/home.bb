@@ -21,7 +21,7 @@
 (def config-file-name "homebb.edn")
 
 ;============ globals
-(def version "0.4.4")
+(def version "0.4.5")
 (def app-name "home.bb")
 (def app-description "Simple, one file, zero dependency dotfiles manager powered by Babashka")
 (def repository "https://github.com/atomicptr/home.bb")
@@ -130,6 +130,11 @@
   (->> config
        expand-env-vars))
 
+(defn reparent-path [path from-path to-path]
+  (let [source-rel (fs/relativize from-path path)
+        target     (fs/path to-path source-rel)]
+    (str target)))
+
 (defn apply-module-paths [fun paths m]
   (reduce
    (fn [acc path]
@@ -224,6 +229,12 @@
    opts
    (find-leaf-files (:config-dir opts))))
 
+(defn find-leaf-dirs [dir]
+  (->> (fs/glob dir "**" {:hidden true})
+       (filter fs/directory?)
+       (filter #(empty? (filter fs/directory? (fs/glob % "**" {:hidden true}))))
+       (map str)))
+
 (defmethod install-config :link/dirs [_ opts]
   ; install files for root dir
   (let [files (->> (fs/glob (:config-dir opts) "*" {:hidden true})
@@ -234,10 +245,7 @@
        (link-file file target-file opts))
      opts
      files))
-  (let [dirs (->> (fs/glob (:config-dir opts) "**" {:hidden true})
-                  (filter fs/directory?)
-                  (filter #(empty? (filter fs/directory? (fs/glob % "**" {:hidden true}))))
-                  (map str))]
+  (let [dirs (find-leaf-dirs (:config-dir opts))]
     (doseq [dir dirs]
       (assert (fs/directory? dir))
       (let [source-dir-rel (str (fs/relativize (:config-dir opts) dir))
@@ -270,32 +278,21 @@
   (and (fs/sym-link? path)
        (not (fs/exists? (fs/read-link path)))))
 
-(defn glob-all [dir]
-  (cond
-    (fs/directory? dir)
-    (->> (fs/list-dir dir)
-         (mapv #(if (fs/directory? %) (concat [%] (glob-all %)) %))
-         (flatten)
-         (map str))
-
-    :else
-    [(str dir)]))
-
 (defn find-dead-symlinks-in-target-dir [target-dir config-dir]
-  (->> (fs/list-dir config-dir)
-       (mapv #(fs/relativize config-dir %))
-       (mapv #(fs/path target-dir %))
-       (mapv #(if (fs/directory? %) (concat [%] (glob-all %)) %))
+  (->> (find-leaf-files config-dir)
+       (mapv #(reparent-path % config-dir target-dir))
+       (mapv fs/parent)
+       (distinct)
+       (mapv #(fs/glob % "*" {:hidden true}))
        (flatten)
-       (filterv dead-symlink?)
-       (mapv str)))
+       (filterv dead-symlink?)))
 
 (defn execute-file-processor [processor opts vars]
   (doseq [file (fs/glob (:config-dir opts) (str "**/*." (:extension processor)) {:hidden true})]
     (let [file                  (str file)
           source-file-rel       (str (fs/relativize (:config-dir opts) file))
           target-processor-file (str (fs/path (:target-dir opts) source-file-rel))
-          _                     (assert (fs/exists? target-processor-file))
+          _                     (assert (fs/exists? target-processor-file) (format "Asserted that %s exists" target-processor-file))
           target-file           (fs/strip-ext target-processor-file (:extension processor))]
       (if (fs/exists? target-file)
         (when (:verbose? opts)
